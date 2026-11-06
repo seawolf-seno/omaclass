@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""OmaClass helper: the bar panel's only door to Veyon.
+
+Prints one JSON object on stdout. Hosts and arguments are passed to
+veyon-cli as separate argv entries, never through a shell.
+
+  omaclass-veyon classes
+  omaclass-veyon status HOST...
+  omaclass-veyon run start|stop FEATURE ARGS_JSON HOST...
+"""
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+
+VEYON_PORT = 11100
+MAX_HOSTS = 64
+MAX_NAME = 64
+# Only what the panel offers. Anything else is refused.
+FEATURES = {"ScreenLock", "TextMessage", "OpenWebsite"}
+ARG_KEYS = {"text", "title", "websiteUrls"}
+MAX_ARG = 500
+
+HOST_RE = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$|^[0-9A-Fa-f:.]{2,45}$")
+LOCATION_RE = re.compile(r'^Location "(.*)"\s*$')
+COMPUTER_RE = re.compile(r'^\s+Computer "(.*)" \(host address: "(.*?)"')
+
+
+def veyon_env():
+    env = dict(os.environ)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    return env
+
+
+def valid_host(host):
+    return bool(HOST_RE.match(host)) and not host.startswith("-")
+
+
+def parse_classes(text):
+    """Parse `veyon-cli networkobjects list` into [{name, computers:[{name, host}]}]."""
+    classes = []
+    for line in text.splitlines():
+        loc = LOCATION_RE.match(line)
+        if loc:
+            classes.append({"name": loc.group(1)[:MAX_NAME], "computers": []})
+            continue
+        comp = COMPUTER_RE.match(line)
+        if comp and classes:
+            host = comp.group(2)
+            if valid_host(host) and len(classes[-1]["computers"]) < MAX_HOSTS:
+                classes[-1]["computers"].append({"name": comp.group(1)[:MAX_NAME], "host": host})
+    return classes
+
+
+def cmd_classes():
+    try:
+        out = subprocess.run(["veyon-cli", "networkobjects", "list"], env=veyon_env(),
+                             capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": "veyon-cli unavailable: %s" % exc.__class__.__name__, "classes": []}
+    return {"ok": True, "classes": parse_classes(out.stdout)}
+
+
+def reachable(host):
+    try:
+        with socket.create_connection((host, VEYON_PORT), timeout=0.8):
+            return True
+    except OSError:
+        return False
+
+
+def hosts_from(args):
+    hosts = [h for h in args if valid_host(h)][:MAX_HOSTS]
+    return list(dict.fromkeys(hosts))
+
+
+def cmd_status(args):
+    hosts = hosts_from(args)
+    if not hosts:
+        return {"ok": True, "hosts": {}}
+    with ThreadPoolExecutor(max_workers=min(16, len(hosts))) as pool:
+        results = dict(zip(hosts, pool.map(reachable, hosts)))
+    return {"ok": True, "hosts": results}
+
+
+def parse_feature_args(raw):
+    """Accept only a flat JSON object of known keys with short string values."""
+    if raw in ("", "{}"):
+        return "{}"
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("arguments must be an object")
+    clean = {}
+    for key, value in data.items():
+        if key not in ARG_KEYS or not isinstance(value, str) or len(value) > MAX_ARG:
+            raise ValueError("unsupported argument")
+        clean[key] = value
+    return json.dumps(clean)
+
+
+def run_one(op, feature, feature_args, host):
+    cmd = ["veyon-cli", "feature", op, host, feature]
+    if op == "start" and feature_args != "{}":
+        cmd.append(feature_args)
+    try:
+        res = subprocess.run(cmd, env=veyon_env(), capture_output=True, text=True, timeout=25)
+        return res.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def cmd_run(args):
+    if len(args) < 3:
+        return {"ok": False, "error": "usage: run start|stop FEATURE ARGS_JSON HOST..."}
+    op, feature, raw_args = args[0], args[1], args[2]
+    if op not in ("start", "stop") or feature not in FEATURES:
+        return {"ok": False, "error": "action not allowed"}
+    try:
+        feature_args = parse_feature_args(raw_args)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    hosts = hosts_from(args[3:])
+    if not hosts:
+        return {"ok": True, "done": [], "failed": []}
+    with ThreadPoolExecutor(max_workers=min(16, len(hosts))) as pool:
+        results = list(pool.map(lambda h: run_one(op, feature, feature_args, h), hosts))
+    return {"ok": True,
+            "done": [h for h, ok in zip(hosts, results) if ok],
+            "failed": [h for h, ok in zip(hosts, results) if not ok]}
+
+
+def main(argv):
+    if not argv:
+        result = {"ok": False, "error": "no command"}
+    elif argv[0] == "classes":
+        result = cmd_classes()
+    elif argv[0] == "status":
+        result = cmd_status(argv[1:])
+    elif argv[0] == "run":
+        result = cmd_run(argv[1:])
+    else:
+        result = {"ok": False, "error": "unknown command"}
+    print(json.dumps(result))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

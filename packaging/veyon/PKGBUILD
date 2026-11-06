@@ -1,0 +1,50 @@
+# Local build of Veyon 4.11.4 (AUR 'veyon' is stuck at 4.9.0, which has no Wayland support).
+# Based on the AUR PKGBUILD by sgar.
+pkgname=veyon
+pkgver=4.11.4
+pkgrel=3
+pkgdesc="Cross-platform computer monitoring and classroom management"
+arch=('x86_64' 'aarch64')
+url="https://veyon.io/"
+license=('GPL-2.0-only')
+depends=('hicolor-icon-theme' 'libfakekey' 'libjpeg-turbo' 'libldap' 'libsasl'
+         'libvncserver' 'libxcomposite' 'libxcursor' 'libxdamage' 'libxext'
+         'libxfixes' 'libxinerama' 'libxrandr' 'libxtst' 'lzo' 'openssl' 'pam'
+         'procps-ng' 'qca-qt6' 'qt6-base' 'qt6-5compat' 'qt6-httpserver' 'qt6-websockets'
+         'libxi' 'libpipewire' 'xdg-desktop-portal')
+makedepends=('clang' 'cmake' 'ninja' 'git' 'qt6-declarative' 'qt6-httpserver' 'qt6-tools')
+source=("git+https://github.com/veyon/veyon.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$srcdir/$pkgname"
+  git submodule update --init --recursive
+  # D-Bus session sockets are always mode 0666 (protection comes from the 0700
+  # /run/user/<uid> directory). Veyon 4.11.4 rejects them as "world-writable",
+  # which drops DBUS_SESSION_BUS_ADDRESS and breaks Wayland/portal capture.
+  sed -i 's/if (st.st_mode \& (S_IWGRP | S_IWOTH))/if (S_ISSOCK(st.st_mode) == false \&\& (st.st_mode \& (S_IWGRP | S_IWOTH)))/' \
+    plugins/platform/linux/LinuxServiceCore.cpp
+  grep -q 'S_ISSOCK(st.st_mode) == false' plugins/platform/linux/LinuxServiceCore.cpp
+  # wayvnc (used via the External VNC server plugin on Hyprland, whose portal has
+  # no RemoteDesktop interface) sends the QEMU extended key event pseudo-rect,
+  # which carries no payload. Veyon 4.11.4 treats it as unsupported and drops
+  # the connection.
+  grep -q 'case rfbEncodingQemuExtendedKeyEvent:' core/src/VncClientProtocol.cpp ||
+    sed -i 's/^\tcase rfbEncodingPointerPos:$/\tcase rfbEncodingQemuExtendedKeyEvent:\n\tcase rfbEncodingPointerPos:/' \
+      core/src/VncClientProtocol.cpp
+  grep -q 'case rfbEncodingQemuExtendedKeyEvent:' core/src/VncClientProtocol.cpp
+}
+
+build() {
+  cmake -B build -S "$pkgname" -G Ninja \
+    -DCMAKE_BUILD_TYPE='RelWithDebInfo' \
+    -DCMAKE_INSTALL_PREFIX='/usr' \
+    -DSYSTEMD_SERVICE_INSTALL_DIR='/usr/lib/systemd/system' \
+    -DWITH_QT6=ON \
+    -Wno-dev
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
