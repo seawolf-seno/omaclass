@@ -54,3 +54,17 @@ test("parseJson and resultText", () => {
   assert.equal(Model.resultText("Locked", 1, 0, false), "Locked 1 computer")
   assert.equal(Model.resultText("Locked", 3, 2, true), "Locked 3 computers · 2 didn't respond (sample)")
 })
+
+test("asSample turns OmaMastery students into pretend computers", () => {
+  const cls = Model.asSample({ id: "ap-csp", name: "AP CSP", now: true, students: ["Ava", "Ben"] })
+  assert.deepEqual(cls.computers, [{ name: "Ava", host: "sample-1" }, { name: "Ben", host: "sample-2" }])
+  assert.equal(cls.sample, true)
+  assert.equal(Model.asSample({}).computers.length, 0)
+})
+
+test("nowIndex prefers the class now, then next, then the first", () => {
+  assert.equal(Model.nowIndex([{}, { next: true }, { now: true }]), 2)
+  assert.equal(Model.nowIndex([{}, { next: true }]), 1)
+  assert.equal(Model.nowIndex([]), 0)
+  assert.deepEqual(Model.sampleStatus(null), {})
+})

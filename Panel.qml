@@ -23,6 +23,7 @@ Panel {
   readonly property string iconGrid: String.fromCodePoint(0xf0570)
   readonly property string iconSend: String.fromCodePoint(0xf048a)
   readonly property string iconNext: String.fromCodePoint(0xf0140)
+  readonly property string iconMastery: String.fromCodePoint(0xf0128)
 
   // ---- Look ---------------------------------------------------------------
   readonly property color foreground: Color.foreground
@@ -34,7 +35,9 @@ Panel {
   // ---- State --------------------------------------------------------------
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/omaclass-veyon")).replace(/^file:\/\//, ""))
   property bool sampleMode: String(setting("sampleClass", false)) === "true"
-  property var realClasses: []
+  property var loadedClasses: []
+  property string classSource: ""       // "omamastery" when OmaMastery supplies the classes
+  property bool classPicked: false      // the teacher chose a class since opening the panel
   property int classIndex: 0
   property var status: ({})
   property var lockedClasses: ({})
@@ -44,7 +47,15 @@ Panel {
   property string pendingVerb: ""
   property string pendingAction: ""
 
-  readonly property var classes: sampleMode ? [Model.sampleClass()] : realClasses
+  // Sample mode uses OmaMastery's made-up classes when there are any, so a
+  // demo shows the same class in both apps; otherwise a built-in one.
+  readonly property var classes: {
+    // Real mode: every class, with the real computers in its Veyon room.
+    if (!sampleMode) return loadedClasses
+    var samples = loadedClasses.filter(function(c) { return c.sample === true }).map(Model.asSample)
+    return samples.length > 0 ? samples : [Model.sampleClass()]
+  }
+  readonly property bool hasMastery: classSource === "omamastery"
   readonly property var currentClass: classes.length > 0 ? classes[Math.min(classIndex, classes.length - 1)] : null
   readonly property var online: Model.onlineHosts(currentClass, status)
   readonly property bool locked: currentClass ? lockedClasses[currentClass.name] === true : false
@@ -57,14 +68,15 @@ Panel {
     return sampleMode ? "SAMPLE · " + text : text
   }
 
-  onSampleModeChanged: { feedback = ""; composer = ""; classIndex = 0; refresh() }
-  onOpenedChanged: if (opened) refresh()
+  onSampleModeChanged: { feedback = ""; composer = ""; classPicked = false; refresh() }
+  onOpenedChanged: if (opened) { classPicked = false; refresh() }
+  onClassesChanged: {
+    // Land on the class happening now (or next) unless the teacher moved.
+    if (!classPicked) classIndex = Model.nowIndex(classes)
+    if (sampleMode) status = Model.sampleStatus(currentClass)
+  }
 
   function refresh() {
-    if (sampleMode) {
-      status = Model.sampleStatus(Model.sampleClass())
-      return
-    }
     if (!classesProc.running) classesProc.running = true
   }
 
@@ -144,9 +156,17 @@ Panel {
     Quickshell.execDetached(["veyon-master"])
   }
 
+  function openMastery() {
+    close()
+    var id = currentClass && currentClass.id ? String(currentClass.id) : ""
+    Quickshell.execDetached(id ? ["omamastery", "open", id] : ["omamastery"])
+  }
+
   function nextClass() {
     if (classes.length < 2) return
+    classPicked = true
     classIndex = (classIndex + 1) % classes.length
+    if (sampleMode) status = Model.sampleStatus(currentClass)
     composer = ""
     feedback = ""
     checkStatus()
@@ -160,7 +180,8 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var data = Model.parseJson(text)
-        root.realClasses = data && Array.isArray(data.classes) ? data.classes.slice(0, 32) : []
+        root.classSource = data && data.source === "omamastery" ? "omamastery" : ""
+        root.loadedClasses = data && Array.isArray(data.classes) ? data.classes.slice(0, 32) : []
         root.checkStatus()
       }
     }
@@ -523,7 +544,9 @@ Panel {
           visible: !root.hasClass
           wrapMode: Text.WordWrap
           elide: Text.ElideNone
-          text: "No student computers yet. Add them in the full classroom view, or try the sample class below."
+          text: root.hasMastery
+            ? "No student computers for this class yet. Set its room in OmaMastery's class.toml, or try the sample class below."
+            : "No student computers yet. Add them in the full classroom view, or try the sample class below."
           color: root.dim
           font.pixelSize: Style.font.bodySmall
         }
@@ -549,10 +572,22 @@ Panel {
             id: fullButton
             anchors.left: parent.left
             iconText: root.iconGrid
-            text: "Full classroom view"
+            text: "Classroom"
             foreground: root.foreground
             fontFamily: root.fontFamily
             onClicked: root.openFullView()
+          }
+
+          Button {
+            anchors.left: fullButton.right
+            anchors.leftMargin: Style.space(4)
+            anchors.verticalCenter: fullButton.verticalCenter
+            visible: root.hasMastery
+            iconText: root.iconMastery
+            text: "Mastery"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: root.openMastery()
           }
 
           Button {

@@ -18,10 +18,33 @@ function sampleClass() {
 // both states.
 function sampleStatus(cls) {
   var status = {}
+  if (!cls || !Array.isArray(cls.computers)) return status
   for (var i = 0; i < cls.computers.length; i++) {
     status[cls.computers[i].host] = !(i === 4 || i === 9)
   }
   return status
+}
+
+// An OmaMastery sample class as OmaClass shows it: each made-up student gets
+// a pretend computer, so the panel can demo without any real machine.
+function asSample(cls) {
+  var students = Array.isArray(cls.students) ? cls.students : []
+  return {
+    id: String(cls.id || ""),
+    name: String(cls.name || "Sample class"),
+    sample: true,
+    now: cls.now === true,
+    next: cls.next === true,
+    computers: students.map(function(name, i) { return { name: String(name), host: "sample-" + (i + 1) } })
+  }
+}
+
+// The class happening now, else the next one today, else the first.
+function nowIndex(classes) {
+  if (!Array.isArray(classes)) return 0
+  for (var i = 0; i < classes.length; i++) if (classes[i].now === true) return i
+  for (var j = 0; j < classes.length; j++) if (classes[j].next === true) return j
+  return 0
 }
 
 function parseJson(text) {
@@ -91,6 +114,8 @@ function resultText(verb, done, failed, sample) {
 if (typeof module !== "undefined") {
   module.exports = {
     sampleClass: sampleClass,
+    asSample: asSample,
+    nowIndex: nowIndex,
     sampleStatus: sampleStatus,
     parseJson: parseJson,
     initials: initials,

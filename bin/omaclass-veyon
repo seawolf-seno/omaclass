@@ -55,13 +55,59 @@ def parse_classes(text):
     return classes
 
 
-def cmd_classes():
+def veyon_rooms():
     try:
         out = subprocess.run(["veyon-cli", "networkobjects", "list"], env=veyon_env(),
                              capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"ok": False, "error": "veyon-cli unavailable: %s" % exc.__class__.__name__, "classes": []}
-    return {"ok": True, "classes": parse_classes(out.stdout)}
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_classes(out.stdout)
+
+
+def mastery_classes():
+    """The teacher's classes from OmaMastery (~/Classes), or None without it."""
+    try:
+        out = subprocess.run(["omamastery", "classes", "--json"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        data = json.loads(out.stdout)
+    except ValueError:
+        return None
+    classes = data.get("classes") if isinstance(data, dict) else None
+    return classes if isinstance(classes, list) else None
+
+
+def merge_classes(mastery, rooms):
+    """OmaMastery's classes, each with the computers of the Veyon room it names."""
+    by_room = {room["name"]: room["computers"] for room in rooms or []}
+    merged = []
+    for item in mastery[:32]:
+        if not isinstance(item, dict):
+            continue
+        students = [str(s)[:MAX_NAME] for s in item.get("students", []) if isinstance(s, str)][:MAX_HOSTS]
+        merged.append({
+            "id": str(item.get("id", ""))[:MAX_NAME],
+            "name": str(item.get("name", ""))[:MAX_NAME],
+            "now": item.get("now") is True,
+            "next": item.get("next") is True,
+            "sample": item.get("sample") is True,
+            "students": students,
+            "computers": by_room.get(str(item.get("room", "")), []),
+        })
+    return merged
+
+
+def cmd_classes():
+    rooms = veyon_rooms()
+    mastery = mastery_classes()
+    if mastery is not None:
+        return {"ok": True, "source": "omamastery", "classes": merge_classes(mastery, rooms)}
+    if rooms is None:
+        return {"ok": False, "error": "veyon-cli unavailable", "source": "veyon", "classes": []}
+    return {"ok": True, "source": "veyon", "classes": rooms}
 
 
 def reachable(host):

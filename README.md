@@ -17,6 +17,14 @@ Omarchy student on an Apple Silicon MacBook: view, lock, message and remote cont
 - On Hyprland students, `wayvnc -r 127.0.0.1 5900` plus Veyon's External VNC
   server plugin (Hyprland's portal has no RemoteDesktop interface).
 
+## With OmaMastery
+
+If [OmaMastery](https://github.com/seawolf-seno/omamastery) is installed, OmaClass
+takes its class list from it (`omamastery classes --json`), opens on the class
+happening now, shows each class's computers from the Veyon room named in its
+`class.toml`, and adds a Mastery button. Sample mode then shows OmaMastery's
+made-up classes. Without it, OmaClass lists Veyon's rooms.
+
 ## Use
 
 ```sh

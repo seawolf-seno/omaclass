@@ -48,5 +48,20 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(helper.cmd_run(["start", "ScreenLock", "{}", "-bad"]), {"ok": True, "done": [], "failed": []})
 
 
+
+class MergeTests(unittest.TestCase):
+    def test_merge_attaches_room_computers(self):
+        rooms = [{"name": "Room 12", "computers": [{"name": "lab-01", "host": "10.0.0.21"}]}]
+        mastery = [{"id": "ap-csp", "name": "AP CSP", "room": "Room 12", "now": True, "students": ["Ava"]},
+                   {"id": "fot", "name": "Foundations", "room": "", "sample": True, "students": ["Ben", 3]},
+                   "junk"]
+        merged = helper.merge_classes(mastery, rooms)
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0]["computers"], [{"name": "lab-01", "host": "10.0.0.21"}])
+        self.assertTrue(merged[0]["now"])
+        self.assertEqual(merged[1]["computers"], [])
+        self.assertEqual(merged[1]["students"], ["Ben"])
+
+
 if __name__ == "__main__":
     unittest.main()
